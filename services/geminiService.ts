@@ -1,18 +1,12 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { GaitMetrics } from '../types';
 
-// Using gemini-2.0-flash-exp as it is a known valid model with strong video analysis capabilities.
+// Using gemini-2.0-flash-exp for video analysis capabilities.
 const MODEL_NAME = 'gemini-2.0-flash-exp';
 
 export const analyzeGaitVideo = async (videoFile: File): Promise<GaitMetrics> => {
-  // VITE_API_KEY is required for Vite/Vercel deployments
-  const apiKey = import.meta.env.VITE_API_KEY;
-  
-  if (!apiKey) {
-    throw new Error("API Key not found. Please check your Vercel Environment Variables.");
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
+  // Use process.env.API_KEY directly as required.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   // Convert File to Base64
   const base64Data = await fileToGenerativePart(videoFile);
