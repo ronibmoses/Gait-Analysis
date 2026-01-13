@@ -1,6 +1,13 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { GaitMetrics } from '../types';
 
+// Declare process to satisfy TypeScript compiler (TS2580)
+declare const process: {
+  env: {
+    API_KEY: string;
+  }
+};
+
 // Using gemini-2.0-flash-exp for video analysis capabilities.
 const MODEL_NAME = 'gemini-2.0-flash-exp';
 
