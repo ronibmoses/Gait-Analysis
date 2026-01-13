@@ -1,18 +1,11 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { GaitMetrics } from '../types';
 
-// Declare process to satisfy TypeScript compiler (TS2580)
-declare const process: {
-  env: {
-    API_KEY: string;
-  }
-};
-
 // Using gemini-2.0-flash-exp for video analysis capabilities.
 const MODEL_NAME = 'gemini-2.0-flash-exp';
 
 export const analyzeGaitVideo = async (videoFile: File): Promise<GaitMetrics> => {
-  // Use process.env.API_KEY directly as required.
+  // Use process.env.API_KEY directly. @types/node provides the type definition.
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   // Convert File to Base64
