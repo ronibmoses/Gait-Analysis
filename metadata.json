@@ -1,0 +1,8 @@
+{
+  "name": "Computerized Gait Analysis",
+  "description": "Advanced tool for automated gait analysis. Record or upload video to receive detailed biomechanical metrics.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
