@@ -5,8 +5,16 @@ import { GaitMetrics } from '../types';
 const MODEL_NAME = 'gemini-2.0-flash-exp';
 
 export const analyzeGaitVideo = async (videoFile: File): Promise<GaitMetrics> => {
+  // Access the key injected by Vite
+  const apiKey = process.env.API_KEY;
+
+  // Explicit check to provide a helpful error message in the UI if the build failed to capture the key
+  if (!apiKey) {
+      throw new Error("API Key is missing. If you are running on Vercel, please ensuring your Environment Variable is named 'API_KEY' and REDEPLOY the project to apply changes.");
+  }
+
   // Use process.env.API_KEY directly. @types/node provides the type definition.
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenAI({ apiKey });
 
   // Convert File to Base64
   const base64Data = await fileToGenerativePart(videoFile);
