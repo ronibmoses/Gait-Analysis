@@ -42,6 +42,8 @@ const App: React.FC = () => {
   };
 
   const handleVideoReady = async (file: File) => {
+    if (!userProfile) return;
+    
     setAppState(AppState.ANALYZING);
     setError(null);
     setProgress(0);
@@ -50,8 +52,8 @@ const App: React.FC = () => {
       // --- HYBRID ANALYSIS ENGINE ---
       const geminiPromise = analyzeGaitVideo(file);
       
-      // Pass the progress setter to the CV service
-      const cvPromise = analyzeGaitCV(file, (p) => setProgress(p));
+      // Pass the progress setter and user height to the CV service
+      const cvPromise = analyzeGaitCV(file, userProfile.height, (p) => setProgress(p));
 
       // Wait for both to finish
       const [geminiMetrics, cvMetrics] = await Promise.all([geminiPromise, cvPromise]);
@@ -62,6 +64,8 @@ const App: React.FC = () => {
           cadence: cvMetrics.cadence,
           meanStepInterval: cvMetrics.meanStepInterval,
           stepTimeVariability: cvMetrics.stepTimeVariability,
+          averageBaseOfSupportCm: cvMetrics.averageBaseOfSupportCm,
+          trackedSubjectImage: cvMetrics.trackedFrame
       };
 
       setResults(finalMetrics);

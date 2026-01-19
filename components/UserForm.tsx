@@ -12,12 +12,13 @@ export const UserForm: React.FC<UserFormProps> = ({ onSubmit }) => {
     lastName: '',
     email: '',
     age: 0,
-    gender: Gender.PREFER_NOT_TO_SAY
+    gender: Gender.PREFER_NOT_TO_SAY,
+    height: 170 // Default average height in cm
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (formData.firstName && formData.lastName && formData.email && formData.age > 0) {
+    if (formData.firstName && formData.lastName && formData.email && formData.age > 0 && formData.height > 0) {
       onSubmit(formData);
     }
   };
@@ -67,7 +68,7 @@ export const UserForm: React.FC<UserFormProps> = ({ onSubmit }) => {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Age</label>
             <input
@@ -78,6 +79,18 @@ export const UserForm: React.FC<UserFormProps> = ({ onSubmit }) => {
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
               value={formData.age || ''}
               onChange={(e) => setFormData(prev => ({ ...prev, age: parseInt(e.target.value) || 0 }))}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Height (cm)</label>
+            <input
+              type="number"
+              required
+              min="50"
+              max="250"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+              value={formData.height || ''}
+              onChange={(e) => setFormData(prev => ({ ...prev, height: parseInt(e.target.value) || 0 }))}
             />
           </div>
           <div>
