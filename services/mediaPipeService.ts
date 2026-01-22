@@ -27,7 +27,8 @@ interface CVAnalysisResult {
   meanStepInterval: number;
   stepTimeVariability: number;
   averageBaseOfSupportCm: number;
-  trackedFrame?: string; // Base64 image
+  averageHeelLiftCm: number; // Added
+  trackedFrame?: string;
 }
 
 export const analyzeGaitCV = async (
@@ -62,7 +63,7 @@ export const analyzeGaitCV = async (
     }
 
     pose.setOptions({
-      modelComplexity: 1, // Use 1 (Full) for better accuracy at 30fps
+      modelComplexity: 1,
       smoothLandmarks: true,
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5,
@@ -71,8 +72,9 @@ export const analyzeGaitCV = async (
     // Data collection
     const rawSignals: { ankleDist: number, shoulderWidth: number, timestamp: number }[] = [];
     const bosMeasurements: number[] = []; 
+    // Heel Y coordinates for lift calculation (Y is normalized 0-1, increases downwards)
+    const heelData: { leftY: number, rightY: number, noseY: number, timestamp: number }[] = [];
     
-    // Debug capture
     let capturedDebugFrame: string | undefined = undefined;
     const captureFrameIndex = 30; 
     let currentFrameIndex = 0;
@@ -83,7 +85,7 @@ export const analyzeGaitCV = async (
     pose.onResults((results: any) => {
       currentFrameIndex++;
 
-      // Capture logic
+      // Debug Frame Capture
       if (!capturedDebugFrame && results.poseLandmarks && currentFrameIndex > captureFrameIndex && ctx) {
           canvas.width = videoElement.videoWidth;
           canvas.height = videoElement.videoHeight;
@@ -101,27 +103,24 @@ export const analyzeGaitCV = async (
         const rightShoulder = results.poseLandmarks[RIGHT_SHOULDER];
         const nose = results.poseLandmarks[NOSE];
 
-        // 1. Data Collection for Step Analysis
+        // 1. Separation Data
         if (leftAnkle && rightAnkle && leftShoulder && rightShoulder && 
             leftAnkle.visibility > 0.5 && rightAnkle.visibility > 0.5) {
             
-            // Raw Ankle Distance
             const dx = leftAnkle.x - rightAnkle.x;
             const dy = leftAnkle.y - rightAnkle.y;
             const ankleDist = Math.sqrt(dx*dx + dy*dy);
 
-            // Shoulder Width (for Normalization)
             const sx = leftShoulder.x - rightShoulder.x;
             const sy = leftShoulder.y - rightShoulder.y;
             const shoulderWidth = Math.sqrt(sx*sx + sy*sy);
 
             rawSignals.push({
                 ankleDist,
-                shoulderWidth: shoulderWidth > 0.01 ? shoulderWidth : 1, // Prevent divide by zero
+                shoulderWidth: shoulderWidth > 0.01 ? shoulderWidth : 1,
                 timestamp: videoElement.currentTime
             });
         } else {
-            // Push previous value or 0 if occlusion
              const prev = rawSignals.length > 0 ? rawSignals[rawSignals.length - 1] : { ankleDist: 0, shoulderWidth: 1, timestamp: videoElement.currentTime };
              rawSignals.push({ ...prev, timestamp: videoElement.currentTime });
         }
@@ -131,10 +130,18 @@ export const analyzeGaitCV = async (
             const avgHeelY = (leftHeel.y + rightHeel.y) / 2;
             const subjectPixelHeight = Math.abs(avgHeelY - nose.y);
             
+            // Collect Heel Data for Lift Calculation
+            heelData.push({
+                leftY: leftHeel.y,
+                rightY: rightHeel.y,
+                noseY: nose.y,
+                timestamp: videoElement.currentTime
+            });
+
             if (subjectPixelHeight > 0.2) { 
                 const cmPerUnit = userHeightCm / subjectPixelHeight;
                 const yDiff = Math.abs(leftHeel.y - rightHeel.y);
-                
+                // Only measure BOS when feet are aligned vertically (double support phase)
                 if (yDiff < 0.03) {
                     const widthUnit = Math.abs(leftHeel.x - rightHeel.x);
                     const widthCm = (widthUnit * cmPerUnit) * 0.85;
@@ -163,7 +170,6 @@ export const analyzeGaitCV = async (
 
         while (currentTime < analyzeDuration) {
             videoElement.currentTime = currentTime;
-            
             await new Promise((r) => {
                 const onSeeked = () => {
                     videoElement.removeEventListener('seeked', onSeeked);
@@ -171,7 +177,6 @@ export const analyzeGaitCV = async (
                 };
                 videoElement.addEventListener('seeked', onSeeked);
             });
-
             await pose.send({ image: videoElement });
             currentTime += interval;
             framesProcessed++;
@@ -186,71 +191,72 @@ export const analyzeGaitCV = async (
         URL.revokeObjectURL(videoUrl);
         pose.close();
 
-        // --- ADAPTIVE PIPELINE START ---
+        // --- STEP DETECTION PIPELINE ---
         
-        // 1. Normalization (Scale Invariance)
-        // Ratio = AnkleDist / ShoulderWidth. 
         const normalizedSignal = rawSignals.map(s => s.ankleDist / s.shoulderWidth);
         const timestamps = rawSignals.map(s => s.timestamp);
-
-        // 2. Statistics & Adaptive Threshold
         const { mean } = calculateStatistics(normalizedSignal);
-        
-        // Revised Threshold Strategy:
-        // Use the Mean as the primary threshold. A step is defined as separation greater than average.
-        // We removed the stdDev buffer because it was filtering out valid, low-amplitude steps (false negatives).
-        // We add a 'floor' of 0.15 to ensure we don't count noise when standing still.
-        const adaptiveThreshold = Math.max(mean, 0.15);
+        const adaptiveThreshold = Math.max(mean, 0.05);
 
-        // 3. Peak Detection (Time Domain)
-        const smoothedSignal = movingAverage(normalizedSignal, 4);
+        const smoothedSignal = movingAverage(normalizedSignal, 3);
         const timeDomainPeaks = findPeaks(smoothedSignal, timestamps, adaptiveThreshold);
         const peakCount = timeDomainPeaks.length;
 
-        // 4. Frequency Analysis (FFT / Frequency Domain)
         const fftResult = calculateDominantFrequency(normalizedSignal, PROCESSING_FPS);
-        
-        // Frequency Logic Update:
-        // Ankle Distance Signal has 2 peaks per gait cycle (L step + R step).
-        // Therefore, dominant freq = steps/sec.
-        // If the walker is asymmetric, the 'stride' frequency (1/2 cadence) might be dominant.
-        // If detected cadence is < 60spm (1Hz) but > 0.4Hz, it's likely a stride count (half steps).
         let fftPredictedSteps = Math.round(fftResult.frequency * analyzeDuration);
-        
         const detectedCadence = (fftPredictedSteps / analyzeDuration) * 60;
-        if (detectedCadence > 25 && detectedCadence < 65) {
-             // Likely detected stride frequency instead of step frequency. Double it.
-             // Unless the person is EXTREMELY slow, but 60spm is very slow already.
-             // To be safe, we only double if Peak Count is also roughly double.
-             if (peakCount > fftPredictedSteps * 1.5) {
-                 fftPredictedSteps *= 2;
-             }
+        
+        let finalStepCount = peakCount;
+        if (peakCount > fftPredictedSteps * 1.5 && detectedCadence > 20 && fftPredictedSteps > 3) {
+             finalStepCount = fftPredictedSteps;
         }
 
-        // 5. Consensus Logic
-        let finalStepCount = peakCount;
-        
-        // If the counts diverge by more than 20%, we check reliability.
-        const discrepancy = Math.abs(peakCount - fftPredictedSteps);
-        const percentDiff = discrepancy / ((peakCount + fftPredictedSteps) / 2);
-
-        // We trust peaks more now that threshold is lowered, but if peaks are wildly high (noise), we clamp with FFT.
-        // Or if peaks are wildly low (missed steps), we boost with FFT.
-        if (percentDiff > 0.20 && fftPredictedSteps > 5) {
-            console.log(`Discrepancy detected. Peaks: ${peakCount}, FFT: ${fftPredictedSteps}`);
-            // If peaks are significantly lower than FFT, we probably missed steps (undercount). Trust FFT.
-            if (peakCount < fftPredictedSteps) {
-                 finalStepCount = fftPredictedSteps;
-            } 
-            // If peaks are significantly higher, it might be noise. 
-            // However, with smoothing=4, noise is rare. 
-            // We usually trust the higher number in gait analysis (it's hard to hallucinate rhythmic steps).
-            else {
-                 finalStepCount = peakCount;
+        // --- HEEL LIFT CALCULATION (SHUFFLING DETECTION) ---
+        // 1. Determine Scale Factor (average over session)
+        let cmPerUnitAverage = 0;
+        if (heelData.length > 0) {
+            const avgHeightUnit = heelData.reduce((acc, curr) => acc + Math.abs(curr.noseY - (curr.leftY+curr.rightY)/2), 0) / heelData.length;
+            if (avgHeightUnit > 0) {
+                cmPerUnitAverage = userHeightCm / avgHeightUnit;
             }
         }
 
-        // --- METRICS CALCULATION ---
+        // 2. Calculate Lift for each foot
+        // Note: Y coordinates increase DOWNWARDS. 
+        // Max Y = Floor Level. Min Y = Peak Lift.
+        const calculateLift = (ySignal: number[]) => {
+             // Find "Floor" (e.g., 90th percentile of Y values to ignore outliers)
+             const sortedY = [...ySignal].sort((a,b) => a-b);
+             const floorLevel = sortedY[Math.floor(sortedY.length * 0.90)];
+             
+             // Find "Peak Heights" (Local Minima in Y)
+             const lifts: number[] = [];
+             const smoothedY = movingAverage(ySignal, 5);
+             
+             // Simple valley detection for height
+             for(let i=1; i<smoothedY.length-1; i++) {
+                 if (smoothedY[i] < smoothedY[i-1] && smoothedY[i] < smoothedY[i+1]) {
+                     // Check if this peak is significantly above floor
+                     const liftAmountUnit = floorLevel - smoothedY[i];
+                     if (liftAmountUnit > 0.01) { // Filter tiny noise
+                        lifts.push(liftAmountUnit);
+                     }
+                 }
+             }
+             return lifts;
+        };
+
+        const leftLifts = calculateLift(heelData.map(d => d.leftY));
+        const rightLifts = calculateLift(heelData.map(d => d.rightY));
+        const allLifts = [...leftLifts, ...rightLifts];
+        
+        let averageLiftCm = 0;
+        if (allLifts.length > 0 && cmPerUnitAverage > 0) {
+            const avgLiftUnit = allLifts.reduce((a,b) => a+b, 0) / allLifts.length;
+            averageLiftCm = avgLiftUnit * cmPerUnitAverage;
+        }
+
+        // --- METRICS ---
 
         const durationMin = analyzeDuration / 60;
         const cadence = durationMin > 0 ? Math.round(finalStepCount / durationMin) : 0;
@@ -271,7 +277,6 @@ export const analyzeGaitCV = async (
             stepTimeVariability = 20; 
         }
 
-        // BOS Calculation
         let calculatedBOS = 0;
         if (bosMeasurements.length > 0) {
             bosMeasurements.sort((a, b) => a - b);
@@ -285,6 +290,7 @@ export const analyzeGaitCV = async (
             meanStepInterval,
             stepTimeVariability: Math.round(stepTimeVariability),
             averageBaseOfSupportCm: parseFloat(calculatedBOS.toFixed(1)),
+            averageHeelLiftCm: parseFloat(averageLiftCm.toFixed(1)), // Return the new metric
             trackedFrame: capturedDebugFrame
         });
 
@@ -294,7 +300,6 @@ export const analyzeGaitCV = async (
     };
 
     runAnalysis();
-    
     videoElement.onerror = (e) => reject(new Error("Failed to load video for CV analysis"));
   });
 };
@@ -314,7 +319,6 @@ function calculateDominantFrequency(data: number[], fps: number): { frequency: n
     let maxMag = 0;
     let dominantFreq = 0;
 
-    // Range 0.5Hz (30spm) to 4.0Hz (240spm)
     for (let f = 0.5; f <= 4.0; f += 0.05) {
         let real = 0;
         let imag = 0;
@@ -401,13 +405,10 @@ function movingAverage(data: number[], window: number) {
 
 function findPeaks(data: number[], times: number[], adaptiveThreshold: number) {
     let peaks = [];
-    // Reduced from 0.25 to 0.20 to allow for faster steps and prevent merging close peaks
-    const minTimeDiff = 0.20;
+    const minTimeDiff = 0.25;
 
     for(let i=1; i<data.length-1; i++) {
-        // Local maxima
         if(data[i] > data[i-1] && data[i] > data[i+1]) {
-            // Must be above average width (or noise floor)
             if(data[i] > adaptiveThreshold) {
                 if (peaks.length === 0 || (times[i] - peaks[peaks.length-1].time > minTimeDiff)) {
                     peaks.push({ val: data[i], time: times[i] });

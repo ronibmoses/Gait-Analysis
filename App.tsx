@@ -5,8 +5,9 @@ import { ResultsView } from './components/ResultsView';
 import { UserProfile, GaitMetrics, AppState } from './types';
 import { analyzeGaitVideo } from './services/geminiService';
 import { analyzeGaitCV } from './services/mediaPipeService';
+import { analyzeGaitTF } from './services/tensorFlowService';
 
-const LoadingScreen = ({ progress }: { progress: number }) => (
+const LoadingScreen = ({ progress, status }: { progress: number, status: string }) => (
   <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-sm border border-gray-100 max-w-md mx-auto">
     <div className="w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-6"></div>
     <h3 className="text-xl font-bold text-gray-900 mb-2">Analyzing Gait Pattern</h3>
@@ -16,14 +17,18 @@ const LoadingScreen = ({ progress }: { progress: number }) => (
     </div>
     <p className="text-sm text-gray-500 mb-6">{progress}% Complete</p>
 
-    <div className="text-left space-y-3 mt-4 text-sm text-gray-500">
+    <div className="text-left space-y-3 mt-4 text-sm text-gray-500 w-full">
         <div className="flex items-center">
             <span className="w-2 h-2 bg-indigo-500 rounded-full mr-2 animate-pulse"></span>
-            Gemini AI: Analyzing biomechanics & clinical quality...
+            Gemini AI: Clinical Analysis (Screening for NPH/Pathology)
         </div>
         <div className="flex items-center">
-            <span className="w-2 h-2 bg-emerald-500 rounded-full mr-2 animate-pulse"></span>
-            Computer Vision: Tracking skeletal joints (30 FPS)...
+            <span className={`w-2 h-2 rounded-full mr-2 ${status.includes('MediaPipe') ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`}></span>
+            MediaPipe: Micro-Step Detection
+        </div>
+        <div className="flex items-center">
+             <span className={`w-2 h-2 rounded-full mr-2 ${status.includes('TensorFlow') ? 'bg-orange-500 animate-pulse' : 'bg-gray-300'}`}></span>
+            TensorFlow (MoveNet): Shuffle Detection
         </div>
     </div>
   </div>
@@ -35,6 +40,7 @@ const App: React.FC = () => {
   const [results, setResults] = useState<GaitMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const [loadingStatus, setLoadingStatus] = useState("Initializing...");
 
   const handleUserSubmit = (profile: UserProfile) => {
     setUserProfile(profile);
@@ -49,23 +55,49 @@ const App: React.FC = () => {
     setProgress(0);
     
     try {
-      // --- HYBRID ANALYSIS ENGINE ---
+      // --- TANDEM ANALYSIS ENGINE ---
+      
+      // 1. Gemini (Qualitative)
       const geminiPromise = analyzeGaitVideo(file);
       
-      // Pass the progress setter and user height to the CV service
+      // 2. MediaPipe (Quantitative - Separation Method)
+      setLoadingStatus("Running MediaPipe & TensorFlow...");
       const cvPromise = analyzeGaitCV(file, userProfile.height, (p) => setProgress(p));
 
-      // Wait for both to finish
-      const [geminiMetrics, cvMetrics] = await Promise.all([geminiPromise, cvPromise]);
+      // 3. TensorFlow (Quantitative - Vertical Method)
+      const tfPromise = analyzeGaitTF(file);
+
+      // Wait for all three
+      const [geminiMetrics, mpMetrics, tfMetrics] = await Promise.all([geminiPromise, cvPromise, tfPromise]);
+
+      console.log("MediaPipe Count:", mpMetrics.stepCount);
+      console.log("TensorFlow Count:", tfMetrics.stepCount);
+      console.log("Gemini Count:", geminiMetrics.stepCount);
+
+      // --- CONSENSUS LOGIC (REVISED FOR PATHOLOGY) ---
+      
+      // In pathological gaits (NPH, Parkinson's), standard algorithms tend to UNDERCOUNT 
+      // because steps are shuffles (low amplitude).
+      // Therefore, if there is a discrepancy, the engine detecting MORE steps is usually 
+      // the one that successfully captured the low-amplitude shuffling.
+      
+      let bestStepCount = Math.max(mpMetrics.stepCount, tfMetrics.stepCount);
+      let usedMethod = mpMetrics.stepCount > tfMetrics.stepCount ? "MediaPipe (Sensitive)" : "TensorFlow (Sensitive)";
+
+      // Recalculate cadence based on the "Best" step count
+      const durationMin = mpMetrics.meanStepInterval * mpMetrics.stepCount / 60; // Approximate duration from MP data
+      const finalCadence = durationMin > 0 ? Math.round(bestStepCount / durationMin) : mpMetrics.cadence;
 
       const finalMetrics: GaitMetrics = {
           ...geminiMetrics,
-          stepCount: cvMetrics.stepCount,
-          cadence: cvMetrics.cadence,
-          meanStepInterval: cvMetrics.meanStepInterval,
-          stepTimeVariability: cvMetrics.stepTimeVariability,
-          averageBaseOfSupportCm: cvMetrics.averageBaseOfSupportCm,
-          trackedSubjectImage: cvMetrics.trackedFrame
+          stepCount: bestStepCount,
+          cadence: finalCadence, 
+          meanStepInterval: mpMetrics.meanStepInterval,
+          stepTimeVariability: mpMetrics.stepTimeVariability,
+          averageBaseOfSupportCm: mpMetrics.averageBaseOfSupportCm,
+          averageHeelLiftCm: mpMetrics.averageHeelLiftCm, // New metric
+          trackedSubjectImage: mpMetrics.trackedFrame,
+          analysisSummary: `${geminiMetrics.analysisSummary}\n\n[System Note: Count derived via ${usedMethod}.]`
       };
 
       setResults(finalMetrics);
@@ -131,7 +163,7 @@ const App: React.FC = () => {
 
         {appState === AppState.ANALYZING && (
           <div className="animate-fade-in-up">
-            <LoadingScreen progress={progress} />
+            <LoadingScreen progress={progress} status={loadingStatus} />
           </div>
         )}
 

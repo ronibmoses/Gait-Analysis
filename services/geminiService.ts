@@ -8,15 +8,11 @@ export const analyzeGaitVideo = async (videoFile: File): Promise<GaitMetrics> =>
   // Access the key injected by Vite
   const apiKey = process.env.API_KEY;
 
-  // Explicit check to provide a helpful error message in the UI if the build failed to capture the key
   if (!apiKey) {
       throw new Error("API Key is missing. If you are running on Vercel, please ensuring your Environment Variable is named 'API_KEY' and REDEPLOY the project to apply changes.");
   }
 
-  // Use process.env.API_KEY directly. @types/node provides the type definition.
   const ai = new GoogleGenAI({ apiKey });
-
-  // Convert File to Base64
   const base64Data = await fileToGenerativePart(videoFile);
 
   const schema: Schema = {
@@ -29,23 +25,30 @@ export const analyzeGaitVideo = async (videoFile: File): Promise<GaitMetrics> =>
       gaitSpeed: { type: Type.STRING, description: "Relative gait speed assessment (e.g., 'Slow', 'Normal', 'Fast')." },
       baseOfSupport: { type: Type.STRING, description: "Relative base of support width (e.g., 'Narrow', 'Normal', 'Wide')." },
       turningDuration: { type: Type.NUMBER, description: "Duration of turning movement in seconds. Return 0 if no turn is observed." },
-      analysisSummary: { type: Type.STRING, description: "A brief professional clinical summary of the gait abnormalities or normalities observed." }
+      analysisSummary: { type: Type.STRING, description: "Clinical observation focusing on pathology." }
     },
     required: ["stepCount", "cadence", "stepTimeVariability", "meanStepInterval", "gaitSpeed", "baseOfSupport", "turningDuration", "analysisSummary"],
   };
 
   const prompt = `
-    Analyze this video for gait analysis. The video shows a person walking.
-    Please calculate or estimate the following biomechanical parameters based on the visual evidence:
-    1. Step count
-    2. Cadence (steps/min)
-    3. Step time variability
-    4. Mean step interval
-    5. Relative Gait speed
-    6. Relative Base of support
-    7. Turning duration (if they turn around)
+    Act as a Neurologist specializing in Normal Pressure Hydrocephalus (NPH) and Parkinson's Disease.
+    Analyze this video for gait pathology.
 
-    Provide a professional summary of the gait.
+    CRITICAL INSTRUCTION: You must strictly evaluate for "Magnetic Gait" and "Shuffling".
+    
+    1. **Magnetic Gait Assessment:**
+       - Watch the feet closely. Do they fully leave the ground?
+       - If the feet appear to "glide" or "slide" without clear vertical lift, you MUST classify this as magnetic gait or shuffling.
+       - Do NOT mistake a smooth sliding motion for a "normal fluid gait". In this context, sliding is pathological.
+
+    2. **Key Signs to Report:**
+       - **Low Foot Clearance:** Heels barely clearing the floor.
+       - **Festination:** Steps becoming smaller and faster.
+       - **Start Hesitation:** Difficulty initiating the first step.
+       - **Turning en bloc:** Turning the body as a rigid unit rather than pivoting.
+
+    Output the requested biomechanical metrics. 
+    In the 'analysisSummary', be direct. If feet are dragging or sliding, state: "Evidence of magnetic/shuffling gait observed."
   `;
 
   try {
@@ -60,7 +63,7 @@ export const analyzeGaitVideo = async (videoFile: File): Promise<GaitMetrics> =>
       config: {
         responseMimeType: "application/json",
         responseSchema: schema,
-        temperature: 0.2, // Low temperature for more analytical/factual output
+        temperature: 0.1, // Very low temperature for strict adherence to instructions
       }
     });
 
@@ -73,15 +76,12 @@ export const analyzeGaitVideo = async (videoFile: File): Promise<GaitMetrics> =>
     console.error("Gemini Analysis Error:", error);
     
     let msg = error instanceof Error ? error.message : "Unknown error";
-    
     if (msg.includes("404") || msg.includes("NOT_FOUND")) {
        throw new Error(`Model ${MODEL_NAME} is currently unavailable or the API key is invalid.`);
     }
-
     if (msg.includes("413") || msg.includes("too large")) {
       throw new Error("Video file is too large. Please shorten the recording or use a lower resolution.");
     }
-    
     throw new Error(`Analysis failed: ${msg}`);
   }
 };

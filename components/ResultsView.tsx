@@ -9,16 +9,16 @@ interface ResultsViewProps {
   onReset: () => void;
 }
 
-const StatCard: React.FC<{ label: string; value: string | number; unit?: string; description?: string; badge?: string }> = ({ label, value, unit, description, badge }) => (
-  <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
-    <p className="text-sm font-medium text-gray-500 mb-1">{label}</p>
+const StatCard: React.FC<{ label: string; value: string | number; unit?: string; description?: string; badge?: string; alertColor?: boolean }> = ({ label, value, unit, description, badge, alertColor }) => (
+  <div className={`p-5 rounded-xl border shadow-sm hover:shadow-md transition-shadow relative overflow-hidden ${alertColor ? 'bg-amber-50 border-amber-200' : 'bg-white border-gray-100'}`}>
+    <p className={`text-sm font-medium mb-1 ${alertColor ? 'text-amber-700' : 'text-gray-500'}`}>{label}</p>
     <div className="flex items-baseline">
-      <span className="text-2xl font-bold text-gray-900">{value}</span>
-      {unit && <span className="ml-1 text-sm text-gray-500">{unit}</span>}
+      <span className={`text-2xl font-bold ${alertColor ? 'text-amber-900' : 'text-gray-900'}`}>{value}</span>
+      {unit && <span className={`ml-1 text-sm ${alertColor ? 'text-amber-700' : 'text-gray-500'}`}>{unit}</span>}
     </div>
-    {description && <p className="text-xs text-gray-400 mt-2">{description}</p>}
+    {description && <p className={`text-xs mt-2 ${alertColor ? 'text-amber-600' : 'text-gray-400'}`}>{description}</p>}
     {badge && (
-        <div className="absolute top-0 right-0 bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-1 rounded-bl-lg border-l border-b border-emerald-100">
+        <div className={`absolute top-0 right-0 text-[10px] font-bold px-2 py-1 rounded-bl-lg border-l border-b ${alertColor ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
             {badge}
         </div>
     )}
@@ -28,12 +28,14 @@ const StatCard: React.FC<{ label: string; value: string | number; unit?: string;
 export const ResultsView: React.FC<ResultsViewProps> = ({ metrics, user, onReset }) => {
   
   // Transform data for charts
-  // Normal cadence range 90-130
   const chartData = [
     { name: 'Your Cadence', value: metrics.cadence },
     { name: 'Normal Min', value: 90 },
     { name: 'Normal Max', value: 120 },
   ];
+  
+  // Determine if Heel Lift is concerning (< 5cm)
+  const isShuffleRisk = metrics.averageHeelLiftCm !== undefined && metrics.averageHeelLiftCm < 5.0;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -106,10 +108,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ metrics, user, onReset
              )}
             
              <div className="grid grid-cols-1 gap-4">
+                 {/* New Heel Lift Card */}
                 <StatCard 
-                    label="Gait Speed" 
-                    value={metrics.gaitSpeed} 
-                    description="Relative to normal"
+                    label="Avg. Heel Lift" 
+                    value={metrics.averageHeelLiftCm || "--"} 
+                    unit="cm"
+                    description={isShuffleRisk ? "Low clearance detected (Magnetic Gait Risk)" : "Normal vertical clearance"}
+                    badge={metrics.averageHeelLiftCm ? "CV CALCULATED" : undefined}
+                    alertColor={isShuffleRisk}
                 />
                 <StatCard 
                     label="Base of Support" 
@@ -143,10 +149,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ metrics, user, onReset
              <h3 className="font-semibold text-slate-800 mb-3">Analysis Methodology</h3>
              <ul className="space-y-3 list-disc list-inside">
                  <li>
-                     <span className="font-medium text-slate-900">Step Detection:</span> Using MediaPipe Pose to track Euclidean distance between ankle joints (IDs 27 & 28).
+                     <span className="font-medium text-slate-900">Step Detection:</span> Hybrid engine prioritizing high-frequency inputs to capture shuffling steps.
                  </li>
                  <li>
-                     <span className="font-medium text-slate-900">Base of Support:</span> Calculated as average heel width (cm) during double support phase, scaled by user height.
+                     <span className="font-medium text-slate-900">Heel Lift (Magnetic Gait):</span> Tracks the maximum vertical excursion of the heel landmark relative to the ground plane.
                  </li>
                  <li>
                      <span className="font-medium text-slate-900">Subject Verification:</span> The image on the right shows the skeletal tracking overlay to confirm the analyzed subject.

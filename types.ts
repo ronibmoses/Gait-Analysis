@@ -23,6 +23,7 @@ export interface GaitMetrics {
   gaitSpeed: string; // "Slow", "Normal", "Fast" or relative numerical score
   baseOfSupport: string; // "Narrow", "Normal", "Wide"
   averageBaseOfSupportCm?: number; // Calculated base of support in cm
+  averageHeelLiftCm?: number; // New metric for Magnetic Gait/Shuffling
   turningDuration: number; // seconds, 0 if no turn
   analysisSummary: string;
   trackedSubjectImage?: string; // Snapshot of the analyzed person with skeleton overlay
